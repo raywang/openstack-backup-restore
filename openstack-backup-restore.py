@@ -32,11 +32,16 @@ import os
 import sys
 import argparse
 import subprocess
+import shutil
 from datetime import datetime
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Backup/Restore OpenStack \
+            environment.')
+
+    parser.add_argument("action", metavar="backup | restore", choices=['backup', 'restore'], \
+            help="Backup OpenStack environment.")
 
     parser.add_argument("-u", "--db_user", help="Database User", default="root")
     parser.add_argument("-p", "--db_password", help="Database Password", 
@@ -57,17 +62,6 @@ def parse_args():
     args = parser.parse_args()
 
     return args
-
-    if args.mysql:
-        print("mysql will be backed up")
-    elif args.keystone:
-        print("Keysotne will be backed up")
-    elif args.nova:
-        print("nova will be backed up")
-    elif args.glance:
-        print("glance will be backed up")
-    elif args.cinder:
-        print("cinder will be backed up")
 
 
 def get_databases(args):
@@ -98,22 +92,26 @@ def get_databases(args):
 
     
 def backup_db(args):
+
     """ Backup MySQL Database"""
 
+    timestamp = datetime.now().strftime('%Y%m%d%H%M')
+    mysql_backup_dir = "{}/{}-{}".format(args.dir, "mysql", timestamp)
 
-    if not os.path.exists(args.dir):
-        os.mkdir(args.dir)
+    if not os.path.exists(mysql_backup_dir):
+        if not os.path.exists(args.dir):
+            os.mkdir(args.dir)
+        os.mkdir(mysql_backup_dir)
 
     if not os.path.isdir(args.dir):
         print("ERROR: {} is not a directory.".format(args.dir))
         return
 
-
     db_list = get_databases(args)
 
     for db in db_list:
-        date = datetime.now().strftime('%Y%m%d%H%M')
-        filename = "{}/mysql-{}-{}.sql".format(args.dir, db, date)
+
+        filename = "{}/{}.sql".format(mysql_backup_dir, db)
 
         with open(filename, "w") as f:
 
@@ -138,14 +136,40 @@ def backup_db(args):
                 print("ERROR: backup {} fail!".format(db))
     
 def backup_keystone(args):
-    pass
+    keystone_files = '/etc/keystone'
+    
+    if not os.path.exists(keystone_files):
+        print("The {} is not exist.".format(keystone_files))
+        return
+
+    if not os.path.exists(args.dir):
+        os.mkdir(args.dir)
+
+    timestamp = datetime.now().strftime('%Y%m%d%H%M')
+    keystone_backup_dir = "{}/{}-{}".format(args.dir, "keystone", timestamp)
+
+    shutil.copytree(keystone_files, keystone_backup_dir)
+
 
 def main():
 
     args = parse_args()
 
-    backup_db(args)
-    backup_keystone(args)
+    if args.action == 'backup':
+        if args.mysql:
+            print("mysql will be backed up")
+            backup_db(args)
+        if args.keystone:
+            print("Keysotne will be backed up")
+            backup_keystone(args)
+        if args.nova:
+            print("nova will be backed up")
+        if args.glance:
+            print("glance will be backed up")
+        if args.cinder:
+            print("cinder will be backed up")
+
+
 
 if __name__ == '__main__':
     sys.exit(main())
