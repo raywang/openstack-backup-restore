@@ -53,7 +53,8 @@ def parse_args():
                         default="")
 
     parser.add_argument("--db_host", help="Database Host", default="127.0.0.1")
-    parser.add_argument("--dir", help="Backup Directory", default=".")
+    parser.add_argument("--to_dir", help="Backup Directory", default=".")
+    parser.add_argument("--from_dir", help="Restore Directory", default=".")
     parser.add_argument("--mysql", help="Backup MySQL", action="store_true")
     parser.add_argument("--nova", help="Backup Nova", action="store_true")
     parser.add_argument("--glance", help="Backup Glance", action="store_true")
@@ -61,7 +62,7 @@ def parse_args():
     parser.add_argument("--neutron", help="Backup Neutron", action="store_true")
     parser.add_argument("--keystone", help="Backup Keystone", action="store_true")
     
-    return args
+    return parser.parse_args()
 
 
 def get_databases(args):
@@ -98,15 +99,15 @@ def backup_db(args):
     """ Backup MySQL Database"""
 
     timestamp = datetime.now().strftime('%Y%m%d%H%M')
-    mysql_backup_dir = "{}/{}-{}".format(args.dir, "mysql", timestamp)
+    mysql_backup_dir = "{}/{}-{}".format(args.to_dir, "mysql", timestamp)
 
     if not os.path.exists(mysql_backup_dir):
-        if not os.path.exists(args.dir):
-            os.mkdir(args.dir)
+        if not os.path.exists(args.to_dir):
+            os.mkdir(args.to_dir)
         os.mkdir(mysql_backup_dir)
 
-    if not os.path.isdir(args.dir):
-        print("ERROR: {} is not a directory.".format(args.dir))
+    if not os.path.isdir(args.to_dir):
+        print("ERROR: {} is not a directory.".format(args.to_dir))
         return
 
     db_list = get_databases(args)
@@ -137,33 +138,74 @@ def backup_db(args):
             if ret > 0:
                 print("ERROR: backup {} fail!".format(db))
 
-    
+def restore_db(args):
+    """Restore databases from .sql files"""
+
+    if not os.path.exists(args.from_dir):
+        print("ERROR: {} is not exist.".format(args.from_dir))
+        return
+
+    if not os.path.isdir(args.from_dir):
+        print("ERROR: {} is not a valid directory.".format(args.from_dir))
+        return
+
+    mysql_dir = "{}/{}".format(args.from_dir, [f for f in 
+                os.listdir(args.from_dir) if f.startswith("mysql-")][-1])
+
+    db_files = [f for f in os.listdir(mysql_dir) if f.endswith('.sql')]
+
+    for f in db_files:
+        cmd = "mysql --user={} --password={} --host={} {} < {}".format(
+                args.db_user, args.db_password, args.db_host, f[:-4], 
+                "{}/{}".format(mysql_dir, f))
+        cmd = cmd.split()
+
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+
+        ret = p.wait()
+
+        if ret > 0:
+            print("ret is {}".format(ret))
+            print("ERROR: backup {} fail!".format(f))
+
+        print("stderr is {}".format(stderr))
+
+        
 def backup_openstack(args, service):
 
     """Backup OpenStack Services"""
 
-    if not os.path.exists(args.dir):
-        os.mkdir(args.dir)
+    if not os.path.exists(args.to_dir):
+        os.mkdir(args.to_dir)
 
     service_etc = "/etc/{}".format(service)
     service_var = "/var/lib/{}".format(service)
     service_files = [service_etc, service_var]
 
     timestamp = datetime.now().strftime('%Y%m%d%H%M')
-    service_backup_dir = "{}/{}-{}/".format(args.dir, service, timestamp)
+    service_backup_dir = "{}/{}-{}/".format(args.to_dir, service, timestamp)
 
     for dir in service_files:
         if not os.path.exists(dir):
             print("The {} is not exist.".format(dir))
 
-        shutil.copytree(dir, "{}/{}".format(service_backup_dir, os.path.dirname(dir).replace('/', '')))
+        shutil.copytree(dir, "{}/{}".format(service_backup_dir, 
+                        os.path.dirname(dir).replace('/', '')))
 
+
+def restore_openstack(args):
+    """Only support restore openstack from the latest timestamped directory"""
+    pass
 
 def main():
 
     args = parse_args()
 
     if args.action == 'backup':
+        print("It's going to backup OpenStack")
+
         if args.mysql:
             print("mysql will be backed up")
             backup_db(args)
@@ -182,6 +224,27 @@ def main():
         if args.neutron:
             print("neutron will be backed up")
             backup_openstack(args, "neutron")
+    elif args.action == 'restore':
+        print("It's going to restore OpenStack")
+
+        if args.mysql:
+            print("mysql will be restored")
+            restore_db(args)
+        if args.keystone:
+            print("Keysotne will be restored")
+            restore_openstack(args, "keystone")
+        if args.nova:
+            print("nova will be restored")
+            restore_openstack(args, "nova")
+        if args.glance:
+            print("glance will be restored")
+            restore_openstack(args, "glance")
+        if args.cinder:
+            print("cinder will be restored")
+            restore_openstack(args, "cinder")
+        if args.neutron:
+            print("neutron will be restored")
+            restore_openstack(args, "neutron")
 
 if __name__ == '__main__':
     sys.exit(main())
