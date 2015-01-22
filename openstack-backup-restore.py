@@ -223,27 +223,31 @@ def restore_openstack(args, service):
     if service is 'neutron':
         services = ['neutron-server']
 
+    #pdb.set_trace()
     start_stop_service('stop', services, True)
     restore_db(args, service)
 
     # backup the orignal first
-    shutil.mova('/etc/{}'.format(service), "/etc/{}.orig".format(service))
+    shutil.move('/etc/{}'.format(service), '/etc/{}.orig'.format(service))
+    shutil.move('/var/lib/{}'.format(service), '/var/lib/{}.orig'.format(service))
 
     # copy the backed up dir to /etc
     if not os.path.exists(args.from_dir):
-        print("ERROR: {} is not exist.".format(args.from_dir))
+        print('ERROR: {} is not exist.'.format(args.from_dir))
         return
 
     if not os.path.isdir(args.from_dir):
-        print("ERROR: {} is not a valid directory.".format(args.from_dir))
+        print('ERROR: {} is not a valid directory.'.format(args.from_dir))
         return
 
-    service_dir = "{}/{}".format(args.from_dir, [f for f in os.listdir(
-                args.from_dir) if f.startswith("{}-".format(service))][-1])
+    service_backups = [f for f in os.listdir(args.from_dir) if f.startswith('{}-'.format(service))]
+    service_backups.sort()
+    service_dir = '{}/{}'.format(args.from_dir, service_backups[-1])
 
-    shutil.copytree(service_dir, "/etc/{}".format(service))
+    shutil.copytree('{}/etc'.format(service_dir), '/etc/{}'.format(service))
+    shutil.copytree('{}/varlib'.format(service_dir), '/var/lib/{}'.format(service))
 
-    start_stop_service('start', services)
+    start_stop_service('start', services, True)
     
 
 def start_stop_service(action, services, ignore_error=False):
@@ -265,7 +269,7 @@ def start_stop_service(action, services, ignore_error=False):
 
         ret = p.wait()
         if ret > 0:
-            print("ERROR: start/stop service {} fail!".format(service))
+            print("ERROR: {} service {} fail!".format(action, service))
 
 
 def main():
