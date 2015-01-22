@@ -18,17 +18,24 @@
 #         machine architecture.
 #
 #   * File System 
-#       * compute
-#       * image catalog and delivery
-#       * identify
-#       * block storage
-#       * object storage
+#       Backup include /etc/<service_name> and /var/lib/<service_name>
+#       http://docs.openstack.org/openstack-ops/content/backup_and_recovery.html
+#       * compute <e.g. nova>
+#       * image catalog and delivery <e.g. glance>
+#       * identify <e.g. keystone>
+#       * block storage <e.g. cinder>
 # 
 # Revovering Backup
-#       TODO
-
+#   Retore will be from the latest backup directory of the service
+#       * stop services
+#       * restore the relavent db
+#       * copy the backed up dir to /etc
+#       * start services
+#
 # usage:
-#   ./openstack-backup-restore.py backup --mysql -u root -pubuntu --dir test --keystone --nova --glance --cinder --neutron
+#   ./openstack-backup-restore.py backup --mysql -u root -pubuntu --to_dir test --keystone --nova --glance --cinder --neutron
+#
+#   ./openstack-backup-restore.py restore --mysql -u root -pubuntu --from_dir test --keystone --nova --glance --cinder --neutron
 
 import pdb
 
@@ -138,7 +145,7 @@ def backup_db(args):
             if ret > 0:
                 print("ERROR: backup {} fail!".format(db))
 
-def restore_db(args):
+def restore_db(args, db=None):
     """Restore databases from .sql files"""
 
     if not os.path.exists(args.from_dir):
@@ -152,26 +159,28 @@ def restore_db(args):
     mysql_dir = "{}/{}".format(args.from_dir, [f for f in 
                 os.listdir(args.from_dir) if f.startswith("mysql-")][-1])
 
-    db_files = [f for f in os.listdir(mysql_dir) if f.endswith('.sql')]
+    if db is not None:
+        db_files = ['{}.sql'.format(db)]
+    else:
+        db_files = [f for f in os.listdir(mysql_dir) if f.endswith('.sql')]
 
     for f in db_files:
-        cmd = "mysql --user={} --password={} --host={} {} < {}".format(
-                args.db_user, args.db_password, args.db_host, f[:-4], 
-                "{}/{}".format(mysql_dir, f))
+        cmd = "mysql --user={} --password={} --host={} {}".format(
+                args.db_user, args.db_password, args.db_host, f[:-4])
         cmd = cmd.split()
 
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, 
+        path_to_file = "{}/{}".format(mysql_dir, f)
+        input_cmd = "{} {}".format("source", path_to_file).encode('utf-8')
+                           
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, 
+                            stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
-        stdout, stderr = p.communicate()
+
+        stdout, stderr = p.communicate(input=input_cmd)
 
         ret = p.wait()
-
         if ret > 0:
-            print("ret is {}".format(ret))
-            print("ERROR: backup {} fail!".format(f))
-
-        print("stderr is {}".format(stderr))
-
+            print("ERROR: restore {} fail!".format(f))
         
 def backup_openstack(args, service):
 
@@ -195,53 +204,122 @@ def backup_openstack(args, service):
                         os.path.dirname(dir).replace('/', '')))
 
 
-def restore_openstack(args):
+def restore_openstack(args, service):
     """Only support restore openstack from the latest timestamped directory"""
-    pass
+    
+    if service is 'keystone':
+        services = ['keystone-api']
+
+    if service is 'nova':
+        services = ['nova-api', 'nova-cert', 'nova-scheduler', \
+                    'nova-objectstore', 'nova-consoleauth', 'nova-novncproxy']
+
+    if service is 'glance':
+        services = ['glance--api']
+
+    if service is 'cinder':
+        services = ['cinder--api']
+
+    if service is 'neutron':
+        services = ['neutron-server']
+
+    start_stop_service('stop', services, True)
+    restore_db(args, service)
+
+    # backup the orignal first
+    shutil.mova('/etc/{}'.format(service), "/etc/{}.orig".format(service))
+
+    # copy the backed up dir to /etc
+    if not os.path.exists(args.from_dir):
+        print("ERROR: {} is not exist.".format(args.from_dir))
+        return
+
+    if not os.path.isdir(args.from_dir):
+        print("ERROR: {} is not a valid directory.".format(args.from_dir))
+        return
+
+    service_dir = "{}/{}".format(args.from_dir, [f for f in os.listdir(
+                args.from_dir) if f.startswith("{}-".format(service))][-1])
+
+    shutil.copytree(service_dir, "/etc/{}".format(service))
+
+    start_stop_service('start', services)
+    
+
+def start_stop_service(action, services, ignore_error=False):
+    """start or stop service before restore"""
+
+    if type(services) is not list:
+        services = services.split()
+
+    for service in services:
+        cmd = 'sudo {} {}'.format(action, service)
+        cmd = cmd.split()
+        print("{} {}...".format(action, service))
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, 
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+
+        if ignore_error is True:
+            return
+
+        ret = p.wait()
+        if ret > 0:
+            print("ERROR: start/stop service {} fail!".format(service))
+
 
 def main():
 
     args = parse_args()
 
     if args.action == 'backup':
-        print("It's going to backup OpenStack")
 
         if args.mysql:
             print("mysql will be backed up")
             backup_db(args)
+
         if args.keystone:
             print("Keysotne will be backed up")
             backup_openstack(args, "keystone")
+
         if args.nova:
             print("nova will be backed up")
             backup_openstack(args, "nova")
+
         if args.glance:
             print("glance will be backed up")
             backup_openstack(args, "glance")
+
         if args.cinder:
             print("cinder will be backed up")
             backup_openstack(args, "cinder")
+
         if args.neutron:
             print("neutron will be backed up")
             backup_openstack(args, "neutron")
+
     elif args.action == 'restore':
-        print("It's going to restore OpenStack")
 
         if args.mysql:
             print("mysql will be restored")
             restore_db(args)
+
         if args.keystone:
             print("Keysotne will be restored")
             restore_openstack(args, "keystone")
+
         if args.nova:
             print("nova will be restored")
             restore_openstack(args, "nova")
+
         if args.glance:
             print("glance will be restored")
             restore_openstack(args, "glance")
+
         if args.cinder:
             print("cinder will be restored")
             restore_openstack(args, "cinder")
+
         if args.neutron:
             print("neutron will be restored")
             restore_openstack(args, "neutron")
